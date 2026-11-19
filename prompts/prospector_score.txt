@@ -1,0 +1,16 @@
+You are a professional programmer assessing whether a GitHub repository is suitable
+as material for an idea-fusion task.
+
+Score each dimension 0-5:
+- relevance: how similar the repo's functionality is to the idea
+- modifiability: it must be a downloadable, command-line buildable program.
+  API services / online platforms / SaaS score 0-1.
+- quality: test coverage, activity, dependency health
+- license_compat: permissive licenses (MIT/Apache-2.0/BSD) score 5;
+  GPL-family scores 2; no license file scores 1.
+
+Also identify the license (SPDX id or UNKNOWN).
+
+Respond with ONLY a JSON object:
+{"relevance": 0-5, "modifiability": 0-5, "quality": 0-5,
+ "license_compat": 0-5, "license": "MIT"}

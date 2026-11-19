@@ -1,0 +1,37 @@
+[project]
+name = "ideaforge"
+version = "0.1.0"
+description = "Idea-to-code forge: GitHub retrieval, multi-repo fusion, adversarial multi-model review loop"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "docker>=7.0",
+    "GitPython>=3.1",
+    "fastapi>=0.110",
+    "sse-starlette>=2.0",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ideaforge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    # waiver IF-RF-004: third-party StarletteDeprecationWarning (httpx/TestClient).
+    # Fixing it means upgrading to httpx2, a new runtime dependency that
+    # violates spec 4.5.4; filtered here instead of per-file noqa.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

@@ -1,0 +1,62 @@
+models:
+  deepseek:
+    client: openai_compat
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+  deepseek-r:
+    client: openai_compat
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-reasoner
+    api_key_env: DEEPSEEK_API_KEY
+  gpt4o:
+    client: openai_compat
+    base_url: https://api.openai.com/v1
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+  codex:
+    client: codex_cli
+    cmd: codex
+    model: codex
+    api_key_env: OPENAI_API_KEY
+
+roles:
+  fixer: deepseek
+  reviewer_runnable: deepseek-r
+  reviewer_style: codex
+  reviewer_idea: gpt4o
+  judge_final: gpt4o
+  prospector: deepseek
+  architect: deepseek
+  synthesizer: deepseek
+
+rotation:
+  per_cycle: false
+  rotation_table:
+    - fixer: deepseek
+      reviewer_runnable: deepseek-r
+      reviewer_style: codex
+      reviewer_idea: gpt4o
+    - fixer: codex
+      reviewer_runnable: gpt4o
+      reviewer_style: deepseek
+      reviewer_idea: deepseek-r
+
+expensive_models: [gpt4o, codex]
+
+budget_usd: 5.0
+max_cycles: 6
+top_k: 3
+pause_on_critical: true
+llm_timeout_s: 300
+cmd_timeout_s: 900
+github_retry: 3
+llm_retry: 3
+cmd_retry: 2
+verdict_retry: 5
+context_limit_chars: 30000
+
+sandbox:
+  base_image: python:3.11-slim
+  mem_limit: 4g
+  cpu_count: 2.0

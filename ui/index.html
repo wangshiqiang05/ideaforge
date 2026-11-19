@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>IdeaForge — idea 到代码的锻造炉</title>
+<script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+<style>
+:root { --bg:#0f1117; --panel:#171a23; --line:#262b38; --text:#e6e9f2; --muted:#8b93a7; --accent:#6c8cff; --ok:#3ecf8e; --warn:#f5a623; --bad:#ff5f6d; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 "Segoe UI",system-ui,sans-serif; }
+#app { max-width:1080px; margin:0 auto; padding:24px; }
+h1 { font-size:22px; margin:0 0 4px; }
+.sub { color:var(--muted); margin-bottom:20px; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+label { display:block; color:var(--muted); font-size:12px; margin:10px 0 4px; }
+textarea, input[type=number], input[type=text] { width:100%; background:#0c0e14; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+textarea { min-height:110px; resize:vertical; }
+.row { display:flex; gap:12px; flex-wrap:wrap; }
+.row > div { flex:1; min-width:140px; }
+button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 18px; font:inherit; cursor:pointer; margin-top:12px; }
+button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+button.danger { background:var(--bad); }
+button.ok { background:var(--ok); color:#08260f; }
+.err { color:var(--bad); margin-top:8px; white-space:pre-wrap; }
+.warn-box { border:1px solid var(--warn); background:rgba(245,166,35,.08); color:var(--warn); border-radius:8px; padding:10px; margin-top:10px; }
+.pill { display:inline-block; border-radius:999px; padding:2px 10px; font-size:12px; margin-right:6px; }
+.pill.running { background:rgba(108,140,255,.15); color:var(--accent); }
+.pill.completed { background:rgba(62,207,142,.15); color:var(--ok); }
+.pill.degraded, .pill.failed { background:rgba(255,95,109,.15); color:var(--bad); }
+.pill.awaiting_approval, .pill.awaiting_budget_decision { background:rgba(245,166,35,.15); color:var(--warn); }
+table { width:100%; border-collapse:collapse; margin-top:8px; }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); font-size:13px; }
+th { color:var(--muted); font-weight:normal; }
+pre { background:#0c0e14; border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; max-height:300px; font-size:12px; }
+.copyleft { color:var(--bad); font-weight:bold; }
+.tag { color:var(--muted); font-size:12px; }
+.finding { border-left:3px solid var(--warn); padding:6px 10px; margin:6px 0; background:rgba(245,166,35,.06); }
+.finding.critical { border-left-color:var(--bad); background:rgba(255,95,109,.08); }
+.finding.minor { border-left-color:var(--muted); }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>IdeaForge</h1>
+  <div class="sub">输入 idea → GitHub 检索克隆 → 多仓库融合 → 多模型 GAN 式对抗审查，直到收敛或诚实降级</div>
+
+  <div class="panel">
+    <label>你的 idea（必填，≤5000 字符）</label>
+    <textarea v-model="idea" placeholder="例如：用 qlib 做 A 股 LightGBM 日频回测并输出绩效报告"></textarea>
+    <div class="row">
+      <div><label>预算上限 budget_usd</label><input type="number" v-model.number="cfg.budget_usd" step="0.5" min="0.1"/></div>
+      <div><label>对抗轮数上限 MAX_CYCLES</label><input type="number" v-model.number="cfg.max_cycles" min="1" max="20"/></div>
+      <div><label>候选接管数 top_k</label><input type="number" v-model.number="cfg.top_k" min="1" max="5"/></div>
+      <div><label>高危发现自动暂停</label>
+        <select v-model="cfg.pause_on_critical"><option :value="true">开启</option><option :value="false">关闭</option></select>
+      </div>
+    </div>
+    <div class="err" v-if="ideaError">{{ ideaError }}</div>
+    <button @click="submit" :disabled="submitting">{{ submitting ? '提交中…' : '开始锻造' }}</button>
+  </div>
+
+  <div class="panel" v-if="task">
+    <div>
+      <span class="pill" :class="task.status">{{ statusLabel(task.status) }}</span>
+      <span class="tag">task_id: {{ task.task_id }} · stage: {{ task.stage }} · cycle: {{ task.cycle }}</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label>成本总额</label><strong>${{ task.cost.total.toFixed(4) }}</strong></div>
+      <div><label>分角色成本</label>
+        <span class="tag" v-for="(v, k) in task.cost.by_role" :key="k">{{ k }}: ${{ v.toFixed(4) }}</span>
+      </div>
+    </div>
+
+    <div class="warn-box" v-if="pendingKind">
+      <template v-if="pendingKind === 'plan'">
+        <strong>FusionPlan 待审批</strong>
+        <pre>{{ planPreview }}</pre>
+        <div v-if="copyleftDonors.length" class="/copyleft">⚠ GPL 传染风险供体：{{ copyleftDonors.join(', ') }} — 勾选表示明确接受传染条款</div>
+        <label><input type="checkbox" v-model="gplAccepted"/> 我已理解并接受上述传染条款（如适用）</label>
+        <div class="row">
+          <button class="ok" @click="decide('approve')">批准（含修改后批准）</button>
+          <button class="danger" @click="decide('reject')">拒绝</button>
+        </div>
+      </template>
+      <template v-else-if="pendingKind === 'critical'">
+        <strong>发现 critical 级问题，循环已挂起等待批准</strong>
+        <div class="row">
+          <button class="ok" @click="decide('approve')">批准继续修复</button>
+          <button class="danger" @click="decide('reject')">终止任务</button>
+        </div>
+      </template>
+      <template v-else-if="pendingKind === 'budget'">
+        <strong>成本已达预算上限，任务已挂起</strong>
+        <label>提高预算至（USD）</label><input type="number" v-model.number="newBudget" step="0.5"/>
+        <div class="row">
+          <button class="ok" @click="budget('raise_budget')">提高预算继续</button>
+          <button class="danger" @click="budget('abort')">终止任务</button>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div class="panel" v-if="task">
+    <label>轮次对抗视图（审查意见 vs 修复）</label>
+    <table>
+      <thead><tr><th>轮次</th><th>工具门</th><th>verdicts</th><th>发现</th><th>修复</th><th>振荡</th></tr></thead>
+      <tbody>
+        <tr v-for="c in cycles" :key="c.cycle" @click="openCycle(c.cycle)" style="cursor:pointer">
+          <td>{{ c.cycle }}</td>
+          <td>{{ c.tool_report.passed ? '全绿' : 'FAIL@' + c.tool_report.failed_stage }}</td>
+          <td>{{ c.verdicts.map(v => v.reviewer + ':' + v.verdict).join(' / ') || '—' }}</td>
+          <td>{{ c.aggregated_findings.length }}</td>
+          <td>{{ c.fix_diff ? JSON.parse(c.fix_diff).length + ' 文件' : '—' }}</td>
+          <td>{{ c.osc_detected ? '⚠' : '' }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div v-if="cycleDetail">
+      <label>第 {{ cycleDetail.cycle }} 轮明细</label>
+      <div v-for="f in cycleDetail.aggregated_findings" :key="f.file + f.line + f.description" class="finding" :class="f.severity">
+        [{{ f.severity }}/{{ f.category }}] {{ f.file }}:{{ f.line }} — {{ f.description }}
+        <div class="tag" v-if="f.suggested_fix">fix hint: {{ f.suggested_fix }}</div>
+      </div>
+      <pre>{{ cycleDetail.fix_diff || '（本轮无修复）' }}</pre>
+    </div>
+  </div>
+
+  <div class="panel" v-if="task">
+    <label>历史回放（journal.jsonl）</label>
+    <button class="ghost" @click="loadReplay">加载回放</button>
+    <div class="tag" v-if="replayGaps.length">损坏条目缺口：第 {{ replayGaps.join(', ') }} 行已跳过</div>
+    <pre v-if="replay.length">{{ replayText }}</pre>
+  </div>
+
+  <div class="panel" v-if="report">
+    <label>交付报告</label>
+    <div class="warn-box" v-if="report.banner">{{ report.banner }}</div>
+    <div>验收达成：{{ report.acceptance_done }} / {{ report.acceptance_total }} · completed: {{ report.completed }}</div>
+    <pre>{{ JSON.stringify(report, null, 2) }}</pre>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed } = Vue;
+createApp({
+  setup() {
+    const idea = ref('');
+    const cfg = ref({ budget_usd: 5.0, max_cycles: 6, top_k: 3, pause_on_critical: true });
+    const submitting = ref(false);
+    const ideaError = ref('');
+    const task = ref(null);
+    const pendingKind = ref('');
+    const copyleftDonors = ref([]);
+    const gplAccepted = ref(false);
+    const newBudget = ref(10);
+    const cycles = ref([]);
+    const cycleDetail = ref(null);
+    const replay = ref([]);
+    const replayGaps = ref([]);
+    const report = ref(null);
+    let taskId = null;
+    let timer = null;
+
+    const planPreview = computed(() => {
+      if (pendingKind.value !== 'plan' || !task.value) return '';
+      return task.value.fusion_plan ? JSON.stringify(task.value.fusion_plan, null, 2) : '';
+    });
+    const replayText = computed(() => replay.value.map(e => `[${e.event_seq}] ${e.type} (cycle ${e.cycle}) ${JSON.stringify(e.payload).slice(0, 120)}`).join('\n'));
+
+    function statusLabel(s) {
+      return { running: '运行中', awaiting_approval: '待审批', awaiting_budget_decision: '待预算决策',
+               completed: '已完成', degraded: '诚实降级', failed: '失败' }[s] || s;
+    }
+
+    async function submit() {
+      ideaError.value = '';
+      if (!idea.value.trim()) { ideaError.value = 'idea 不能为空'; return; }
+      if (idea.value.length > 5000) { ideaError.value = `idea 超长：${idea.value.length}/5000 字符`; return; }
+      submitting.value = true;
+      try {
+        const resp = await fetch('/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ idea: idea.value, config: cfg.value }) });
+        if (!resp.ok) {
+          const detail = (await resp.json()).detail || {};
+          if (detail.error === 'idea_too_long') ideaError.value = `idea 超长：${detail.actual}/${detail.limit}`;
+          else if (detail.error === 'invalid_config') ideaError.value = '配置非法：\n' + detail.items.join('\n');
+          else ideaError.value = JSON.stringify(detail);
+          return;
+        }
+        const data = await resp.json();
+        taskId = data.task_id;
+        listenSse();
+        refresh();
+        timer = setInterval(refresh, 2000);
+      } finally { submitting.value = false; }
+    }
+
+    function listenSse() {
+      const es = new EventSource(`/tasks/${taskId}/events`);
+      es.onmessage = () => {};
+      es.addEventListener('approval_required', e => { const p = JSON.parse(e.data).payload; pendingKind.value = p.kind || 'plan'; copyleftDonors.value = p.copyleft_donors || []; });
+      es.addEventListener('budget_break', () => { pendingKind.value = 'budget'; });
+      es.addEventListener('finding_critical', () => { pendingKind.value = 'critical'; });
+      es.addEventListener('completed', () => { pendingKind.value = ''; setTimeout(loadReport, 1500); });
+      es.addEventListener('degraded', () => { pendingKind.value = ''; setTimeout(loadReport, 1500); });
+      es.addEventListener('failed', () => { pendingKind.value = ''; });
+      es.onerror = () => { es.close(); setTimeout(listenSse, 2000); };
+    }
+
+    async function refresh() {
+      if (!taskId) return;
+      const resp = await fetch(`/tasks/${taskId}`);
+      if (!resp.ok) return;
+      task.value = await resp.json();
+      const rc = await fetch(`/tasks/${taskId}/cycles/${Math.max(1, task.value.cycle)}`);
+      if (rc.ok) {
+        const detail = await rc.json();
+        const idx = cycles.value.findIndex(c => c.cycle === detail.cycle);
+        if (idx >= 0) cycles.value[idx] = detail; else cycles.value.push(detail);
+        cycles.value.sort((a, b) => a.cycle - b.cycle);
+      }
+    }
+
+    async function decide(decision) {
+      await fetch(`/tasks/${taskId}/approval`, { method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ decision, gpl_accepted: gplAccepted.value }) });
+      pendingKind.value = '';
+    }
+    async function budget(decision) {
+      await fetch(`/tasks/${taskId}/budget-decision`, { method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ decision, new_budget: newBudget.value }) });
+      pendingKind.value = '';
+    }
+    async function openCycle(n) {
+      const resp = await fetch(`/tasks/${taskId}/cycles/${n}`);
+      if (resp.ok) cycleDetail.value = await resp.json();
+    }
+    async function loadReplay() {
+      // journal 回放走 SSE 的 after_seq 通道或由后端提供；v1 从事件流采样
+      const resp = await fetch(`/tasks/${taskId}/events?after_seq=0`, { headers: { Accept: 'text/event-stream' } });
+      const text = await resp.text();
+      replay.value = text.split('\n').filter(l => l.startsWith('data:')).map(l => JSON.parse(l.slice(5)));
+      replayGaps.value = replay.value.filter(e => e.payload && e.payload.rejected).map(e => e.event_seq);
+    }
+    async function loadReport() {
+      const resp = await fetch(`/tasks/${taskId}/report`);
+      if (resp.ok) report.value = await resp.json();
+    }
+
+    return { idea, cfg, submitting, ideaError, task, pendingKind, planPreview, copyleftDonors, gplAccepted,
+             newBudget, cycles, cycleDetail, replay, replayGaps, replayText, report, statusLabel,
+             submit, decide, budget, openCycle, loadReplay };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
